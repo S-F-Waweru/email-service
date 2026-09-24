@@ -1,4 +1,19 @@
-FROM ubuntu:latest
-LABEL authors="samuel"
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY nest-cli.json tsconfig.json tsconfig.build.json ./
+COPY src ./src
+RUN npm run build
 
-ENTRYPOINT ["top", "-b"]
+FROM node:24-alpine AS production
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=build /app/dist ./dist
+EXPOSE 3000
+
+# The database is reachable only when the container runs, so migrations execute
+# immediately before the API starts rather than during docker build.
+CMD ["npm", "run", "start:prod:migrate"]

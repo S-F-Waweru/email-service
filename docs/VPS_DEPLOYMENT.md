@@ -1,0 +1,354 @@
+# Deploy to an Ubuntu VPS
+
+This guide deploys the API, PostgreSQL, and Redis on one Ubuntu VPS with Docker
+Compose. Nginx terminates HTTPS and proxies traffic to the API bound only to
+`127.0.0.1:3000`. Mailpit is not deployed.
+
+Replace every example domain, username, password, and key before deployment.
+
+## 1. Prepare DNS and the server
+
+Create a DNS `A` record such as `email-api.example.com` pointing to the VPS IPv4
+address. Add an `AAAA` record only if IPv6 is correctly configured.
+
+SSH into the VPS with a sudo-capable, non-root user, install security updates,
+and configure the host firewall:
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y ca-certificates curl git nginx ufw
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw enable
+```
+
+Do not expose PostgreSQL (`5432`), Redis (`6379`), or the Docker daemon to the
+internet. Docker-published ports can bypass normal UFW handling, which is why the
+production Compose example below publishes only the API and binds it explicitly
+to `127.0.0.1`.
+
+## 2. Install Docker Engine and Compose
+
+Use Docker's official Ubuntu repository rather than the convenience script:
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo docker run --rm hello-world
+sudo docker compose version
+```
+
+Either keep using `sudo docker ...`, or deliberately configure Docker access for
+the deployment user. Membership in the `docker` group is effectively root-level
+access and should not be granted casually.
+
+## 3. Copy the application
+
+Choose a stable location and clone the repository:
+
+```bash
+sudo mkdir -p /opt/nvo-email-service
+sudo chown "$USER":"$USER" /opt/nvo-email-service
+git clone <YOUR_GIT_REPOSITORY_URL> /opt/nvo-email-service
+cd /opt/nvo-email-service
+```
+
+For a private repository, use a read-only deploy key. Do not copy a developer's
+personal SSH key onto the server.
+
+## 4. Create production secrets
+
+Create `.env.production` and restrict it:
+
+```bash
+touch .env.production
+chmod 600 .env.production
+```
+
+Add values similar to these:
+
+```env
+NODE_ENV=production
+PORT=3000
+
+DB_HOST=postgres
+DB_PORT=5432
+DB_USER=emailservice
+DB_PASS=REPLACE_WITH_A_LONG_RANDOM_DATABASE_PASSWORD
+DB_NAME=emailservice
+
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+SMTP_HOST=smtp.production-provider.example
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=REPLACE_WITH_SMTP_USERNAME
+SMTP_PASS=REPLACE_WITH_SMTP_PASSWORD
+SMTP_FROM=NVO Contact <contact@example.com>
+
+CORS_ORIGINS=https://www.company-one.example,https://company-one.example
+THROTTLE_TTL_MS=60000
+THROTTLE_LIMIT=30
+
+SITE_DELIVA_APIKEY=REPLACE_WITH_A_RANDOM_SITE_KEY
+SITE_DELIVA_RECIPIENT=contact@company-one.example
+SITE_ALUMNI_APIKEY=REPLACE_WITH_ANOTHER_RANDOM_SITE_KEY
+SITE_ALUMNI_RECIPIENT=contact@company-two.example
+```
+
+Use a password manager or secret manager to generate and retain strong values.
+Never use Mailpit values or commit `.env.production`.
+
+SMTP settings depend on the provider. Port `587` commonly uses STARTTLS with
+`SMTP_SECURE=false`; implicit TLS commonly uses port `465` with
+`SMTP_SECURE=true`. Follow the provider's exact instructions and configure SPF,
+DKIM, and DMARC for the sender domain to improve deliverability.
+
+## 5. Create the production Compose file
+
+Create `compose.production.yml` in the project directory:
+
+```yaml
+services:
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:3000:3000'
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+PostgreSQL and Redis have no host `ports`, so they remain reachable only on the
+private Compose network. Variable substitution for the PostgreSQL container comes
+from the `--env-file` option used in the next step.
+
+Validate and start the stack:
+
+```bash
+sudo docker compose --env-file .env.production \
+  -f compose.production.yml config --quiet
+sudo docker compose --env-file .env.production \
+  -f compose.production.yml up -d --build
+sudo docker compose -f compose.production.yml ps
+sudo docker compose -f compose.production.yml logs --tail=100 app
+```
+
+The image's startup command applies pending TypeORM migrations before starting
+NestJS. If migration execution fails, the API does not start; inspect the app logs
+and fix the database or migration issue rather than bypassing it.
+
+Verify locally on the VPS:
+
+```bash
+curl --fail http://127.0.0.1:3000/
+```
+
+## 6. Configure Nginx
+
+Create `/etc/nginx/sites-available/nvo-email-service`:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name email-api.example.com;
+
+    client_max_body_size 32k;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+    }
+}
+```
+
+Enable and validate it:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/nvo-email-service \
+  /etc/nginx/sites-enabled/nvo-email-service
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+If the default Nginx site conflicts with this host, remove only its enabled
+symlink after checking the active configuration.
+
+## 7. Enable HTTPS
+
+Install Certbot using the current method recommended for the VPS distribution,
+then request a certificate for the API hostname. With the Ubuntu Nginx packages,
+a common flow is:
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d email-api.example.com
+sudo certbot renew --dry-run
+```
+
+Certbot needs the DNS record to resolve to this VPS and ports 80/443 to be
+reachable. Confirm that `https://email-api.example.com/` returns the health text.
+
+Optionally restrict `/docs` in Nginx by IP address or HTTP authentication if the
+interactive API reference should not be public.
+
+## 8. Production smoke test
+
+Use a real configured site key and a new idempotency UUID:
+
+```bash
+curl --fail-with-body --request POST \
+  'https://email-api.example.com/contact' \
+  --header 'Content-Type: application/json' \
+  --header 'x-api-key: REPLACE_WITH_THE_SITE_KEY' \
+  --header "idempotency-key: $(uuidgen)" \
+  --data-raw '{
+    "siteId": "deliva",
+    "fullName": "Production Test",
+    "email": "sender@example.com",
+    "phoneNumber": "+254700000000",
+    "subject": "VPS deployment test",
+    "message": "This message verifies the production contact-email flow."
+  }'
+```
+
+Confirm that the API reports `queued`, the configured recipient receives the
+message, and the container logs contain no delivery error:
+
+```bash
+sudo docker compose -f compose.production.yml logs --tail=200 app
+```
+
+## 9. Backups
+
+Back up PostgreSQL before deployments and on a schedule. This example creates a
+compressed logical dump outside the Docker volume:
+
+```bash
+mkdir -p backups
+set -a
+. ./.env.production
+set +a
+sudo docker compose -f compose.production.yml exec -T postgres \
+  pg_dump -U "$DB_USER" -d "$DB_NAME" | gzip > "backups/emailservice-$(date +%F-%H%M%S).sql.gz"
+```
+
+Copy encrypted backups off the VPS and test restoration periodically. A backup
+that has never been restored is not yet proven. Redis contains queue state, but
+PostgreSQL is the essential durable business record.
+
+## 10. Deploy updates
+
+Review the incoming changes and migrations, create a database backup, then:
+
+```bash
+cd /opt/nvo-email-service
+git pull --ff-only
+sudo docker compose --env-file .env.production \
+  -f compose.production.yml up -d --build
+sudo docker compose -f compose.production.yml ps
+sudo docker compose -f compose.production.yml logs --tail=100 app
+curl --fail https://email-api.example.com/
+```
+
+Compose replaces the application container and preserves named data volumes.
+Prune old images only after verifying the release and understanding what will be
+removed.
+
+## 11. Rollback
+
+Application rollback:
+
+1. Identify the previously deployed Git commit or release tag.
+2. Check whether the new release ran a backward-incompatible migration.
+3. Restore the pre-deployment database backup if required.
+4. Check out the previous release and rebuild the app container.
+5. Run the health and contact-form smoke tests again.
+
+Do not blindly run `migration:revert` in production: a down migration can destroy
+new data. Prefer a reviewed forward-fix when data has already been written under
+the new schema.
+
+## Operational checklist
+
+- [ ] DNS points to the correct VPS.
+- [ ] Only SSH, HTTP, and HTTPS are intentionally public.
+- [ ] PostgreSQL and Redis have no public host ports.
+- [ ] `.env.production` is mode `600` and is not committed.
+- [ ] Mailpit is absent from production.
+- [ ] Real SMTP, SPF, DKIM, and DMARC are configured.
+- [ ] `CORS_ORIGINS` contains only real website origins.
+- [ ] HTTPS works and certificate renewal has been tested.
+- [ ] Database backups run automatically and copies leave the VPS.
+- [ ] Logs and disk usage are monitored.
+- [ ] The health endpoint and a real contact submission pass after deployment.
+
+## Reference documentation
+
+- Docker Engine on Ubuntu: https://docs.docker.com/engine/install/ubuntu/
+- Docker Compose in production: https://docs.docker.com/compose/how-tos/production/
+- Compose dependency health checks: https://docs.docker.com/compose/how-tos/startup-order/
+- Docker port publishing: https://docs.docker.com/engine/network/port-publishing/
+- Certbot instructions: https://certbot.eff.org/instructions

@@ -1,33 +1,32 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
-import { ContactRequest } from './contact/entities/contact-request.entity.js';
-import { MailModule } from './mail/ mail.module.js';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { MailModule } from './mail/mail.module.js';
 import { ContactModule } from './contact/contact.module.js';
-
+import { dataSourceOptions } from './database/data-source.js';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      host: process.env.DB_HOST,
-      port: +process.env.DB_PORT!,
-      username: process.env.DB_USER,
-      password: process.env.DB_PASS,
-      database: process.env.DB_NAME,
-      entities: [ContactRequest],
-      synchronize: true, // dev only — use migrations in production
-    }),
+    TypeOrmModule.forRoot(dataSourceOptions),
+    ThrottlerModule.forRoot([
+      {
+        ttl: Number(process.env.THROTTLE_TTL_MS ?? 60_000),
+        limit: Number(process.env.THROTTLE_LIMIT ?? 30),
+      },
+    ]),
     BullModule.forRoot({
       redis: {
         host: process.env.REDIS_HOST,
-        port: +process.env.DB_PORT!,
+        port: Number(process.env.REDIS_PORT ?? 6379),
       },
     }),
     ContactModule,
     MailModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

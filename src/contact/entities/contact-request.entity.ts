@@ -17,13 +17,19 @@ export class ContactRequest {
   siteId: string;
 
   @Column()
-  name: string;
+  fullName: string;
 
-  @Column()
+  @Column({ length: 254 })
   email: string;
 
-  @Column({ nullable: true })
-  subject: string;
+  @Column({ length: 30 })
+  phoneNumber: string;
+
+  @Column({ type: 'varchar', length: 150, nullable: true })
+  company: string | null;
+
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  subject: string | null;
 
   @Column('text')
   message: string;

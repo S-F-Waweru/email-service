@@ -4,8 +4,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { sitesConfig } from '../../config/sites.config.js';
-
+import { getSiteConfig } from '../../config/sites.config.js';
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
@@ -14,7 +13,7 @@ export class ApiKeyGuard implements CanActivate {
     const siteId = req.body?.siteId;
     const apiKey = req.headers['x-api-key'];
 
-    const site = sitesConfig[siteId];
+    const site = getSiteConfig(siteId);
     if (!site || !apiKey || apiKey !== site.apiKey) {
       throw new UnauthorizedException('Invalid API key or site');
     }

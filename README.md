@@ -1,124 +1,97 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# NVO Email Service
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A reusable NestJS service for contact forms across multiple company websites. It
+validates and stores submissions in PostgreSQL, queues delivery through Bull and
+Redis, and sends formatted HTML and plain-text email through SMTP.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Features
 
-## Description
+- Multi-site routing with a separate API key and recipient per website
+- Required contact details: full name, email, phone number, and message
+- Optional company and subject fields
+- Idempotency protection against duplicate submissions
+- PostgreSQL persistence and TypeORM migrations
+- Redis-backed delivery queue with retries and exponential backoff
+- HTML-safe responsive email template with a plain-text fallback
+- Helmet, configurable CORS, request throttling, and consistent error responses
+- OpenAPI documentation presented through Scalar at `/docs`
+- Mailpit inbox for local SMTP testing without sending real email
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Documentation
 
-## Project setup
+- [Project guide](docs/PROJECT.md)
+- [VPS production deployment](docs/VPS_DEPLOYMENT.md)
+- Interactive API reference: `http://localhost:3000/docs`
 
-```bash
-$ npm install
-```
+## Requirements
 
-## Compile and run the project
+- Node.js 24+
+- npm
+- Docker with the Compose plugin for local PostgreSQL, Redis, and Mailpit
+
+## Local setup
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+cp .env.example .env
+npm install
+docker compose up -d postgres redis
+npm run mailpit:up
+npm run migration:run
+npm run start:dev
 ```
 
-## Run tests
+Open:
+
+- API: `http://localhost:3000`
+- Scalar documentation: `http://localhost:3000/docs`
+- Mailpit inbox: `http://localhost:8025`
+
+Mailpit is defined only in `docker-compose.dev.yml`. It captures local messages
+and must not be used as the SMTP service in production.
+
+## Test a contact submission
+
+Configure a local site in `.env`:
+
+```env
+SITE_DELIVA_APIKEY=local-deliva-secret
+SITE_DELIVA_RECIPIENT=contact@example.com
+```
+
+Submit a request:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+curl --request POST 'http://localhost:3000/contact' \
+  --header 'Content-Type: application/json' \
+  --header 'x-api-key: local-deliva-secret' \
+  --header 'idempotency-key: contact-test-001' \
+  --data-raw '{
+    "siteId": "deliva",
+    "fullName": "Jane Doe",
+    "email": "jane@example.com",
+    "phoneNumber": "+254700000000",
+    "company": "Acme Ltd",
+    "subject": "Website enquiry",
+    "message": "Hello, I would like to learn more about your services."
+  }'
 ```
 
-## Deployment
+Use a new `idempotency-key` for each new submission. Reusing one returns the
+existing request and does not queue a duplicate email.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## Useful commands
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm run start:dev       # Start API with file watching
+npm run mailpit:up      # Start the local fake SMTP inbox
+npm run mailpit:down    # Stop Mailpit
+npm run migration:run  # Build and apply pending migrations
+npm run migration:show # Show migration status
+npm run build           # Compile the production application
+npm run lint            # Run static analysis
+npm test                # Run isolated unit tests
+npm run test:cov        # Run tests with coverage
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-To add it to this project:
-
-```bash
-$ npm install @nestjs/observe
-```
-
-Then follow the [setup guide](https://docs.nestjs.com/observability/overview) - it takes a single import and an app key.
-
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+See [docs/PROJECT.md](docs/PROJECT.md) for configuration, architecture, API, and
+troubleshooting details.
