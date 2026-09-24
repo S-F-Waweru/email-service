@@ -7,6 +7,8 @@ describe('MailProcessor', () => {
   const job = {
     data: {
       contactId: 'contact-1',
+      receivedAt: '2026-09-24T10:30:00.000Z',
+      sourceName: 'Deliva Fasta',
       to: 'recipient@example.com',
       from: 'sender@example.com',
       fullName: '<script>Jane</script>',
@@ -37,10 +39,16 @@ describe('MailProcessor', () => {
     expect(mailService.send).toHaveBeenCalledOnce();
     const [, , html, text, replyTo] = mailService.send.mock.calls[0];
     expect(html).toContain('&lt;script&gt;Jane&lt;/script&gt;');
+    expect(html).not.toContain('contact-1');
+    expect(html).toContain('Deliva Fasta');
+    expect(html).toContain('24 Sept 2026, 10:30 UTC');
+    expect(html).toContain('Website enquiry');
     expect(html).toContain('Acme &amp; Sons');
     expect(html).toContain('Hello &lt;b&gt;team&lt;/b&gt;<br>Second line');
     expect(html).not.toContain('<script>');
     expect(text).toContain('Full name: <script>Jane</script>');
+    expect(text).toContain('Company site: Deliva Fasta');
+    expect(text).not.toContain('Reference: contact-1');
     expect(replyTo).toBe('sender@example.com');
     expect(contactService.updateStatus).toHaveBeenCalledWith(
       'contact-1',

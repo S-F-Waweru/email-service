@@ -1,7 +1,20 @@
 services:
+  app:
+    environment:
+      NODE_ENV: development
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_SECURE: 'false'
+      SMTP_USER: ''
+      SMTP_PASS: ''
+      SMTP_FROM: Website Contact <no-reply@email-service.local>
+    depends_on:
+      mailpit:
+        condition: service_started
+
   mailpit:
     image: axllent/mailpit:latest
     restart: unless-stopped
     ports:
-      - '1025:1025' # Local SMTP endpoint
-      - '8025:8025' # Mailpit browser inbox
+      - '127.0.0.1:8025:8025'

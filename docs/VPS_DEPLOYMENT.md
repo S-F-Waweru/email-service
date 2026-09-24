@@ -1,5 +1,8 @@
 # Deploy to an Ubuntu VPS
 
+If the server will be accessed only by its public IP address, use
+[VPS_IP_DEPLOYMENT.md](VPS_IP_DEPLOYMENT.md) instead.
+
 This guide deploys the API, PostgreSQL, and Redis on one Ubuntu VPS with Docker
 Compose. Nginx terminates HTTPS and proxies traffic to the API bound only to
 `127.0.0.1:3000`. Mailpit is not deployed.
@@ -75,10 +78,10 @@ personal SSH key onto the server.
 
 ## 4. Create production secrets
 
-Create `.env.production` and restrict it:
+Copy the included template and restrict it:
 
 ```bash
-touch .env.production
+cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
@@ -87,6 +90,7 @@ Add values similar to these:
 ```env
 NODE_ENV=production
 PORT=3000
+APP_URL=https://email-api.example.com
 
 DB_HOST=postgres
 DB_PORT=5432
@@ -102,7 +106,7 @@ SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=REPLACE_WITH_SMTP_USERNAME
 SMTP_PASS=REPLACE_WITH_SMTP_PASSWORD
-SMTP_FROM=NVO Contact <contact@example.com>
+SMTP_FROM=Website Contact <contact@example.com>
 
 CORS_ORIGINS=https://www.company-one.example,https://company-one.example
 THROTTLE_TTL_MS=60000
@@ -122,71 +126,24 @@ SMTP settings depend on the provider. Port `587` commonly uses STARTTLS with
 `SMTP_SECURE=true`. Follow the provider's exact instructions and configure SPF,
 DKIM, and DMARC for the sender domain to improve deliverability.
 
-## 5. Create the production Compose file
+## 5. Start the production Compose stack
 
-Create `compose.production.yml` in the project directory:
-
-```yaml
-services:
-  app:
-    build:
-      context: .
-    restart: unless-stopped
-    env_file:
-      - .env.production
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - '127.0.0.1:3000:3000'
-
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASS}
-      POSTGRES_DB: ${DB_NAME}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes']
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  postgres_data:
-  redis_data:
-```
-
-PostgreSQL and Redis have no host `ports`, so they remain reachable only on the
-private Compose network. Variable substitution for the PostgreSQL container comes
-from the `--env-file` option used in the next step.
+The repository includes `docker-compose.yml` with the API, PostgreSQL, and Redis,
+plus `docker-compose.prod.yml` with production restart/image settings. Mailpit is
+only present in `docker-compose.dev.yml` and is therefore absent from production.
+PostgreSQL and Redis have no host ports and remain on the private Compose network.
 
 Validate and start the stack:
 
 ```bash
 sudo docker compose --env-file .env.production \
-  -f compose.production.yml config --quiet
+  -f docker-compose.yml -f docker-compose.prod.yml config --quiet
 sudo docker compose --env-file .env.production \
-  -f compose.production.yml up -d --build
-sudo docker compose -f compose.production.yml ps
-sudo docker compose -f compose.production.yml logs --tail=100 app
+  -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+sudo docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.prod.yml ps
+sudo docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100 app
 ```
 
 The image's startup command applies pending TypeORM migrations before starting
@@ -278,7 +235,8 @@ Confirm that the API reports `queued`, the configured recipient receives the
 message, and the container logs contain no delivery error:
 
 ```bash
-sudo docker compose -f compose.production.yml logs --tail=200 app
+sudo docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.prod.yml logs --tail=200 app
 ```
 
 ## 9. Backups
@@ -291,7 +249,8 @@ mkdir -p backups
 set -a
 . ./.env.production
 set +a
-sudo docker compose -f compose.production.yml exec -T postgres \
+sudo docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.prod.yml exec -T postgres \
   pg_dump -U "$DB_USER" -d "$DB_NAME" | gzip > "backups/emailservice-$(date +%F-%H%M%S).sql.gz"
 ```
 
@@ -307,9 +266,11 @@ Review the incoming changes and migrations, create a database backup, then:
 cd /opt/nvo-email-service
 git pull --ff-only
 sudo docker compose --env-file .env.production \
-  -f compose.production.yml up -d --build
-sudo docker compose -f compose.production.yml ps
-sudo docker compose -f compose.production.yml logs --tail=100 app
+  -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+sudo docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.prod.yml ps
+sudo docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100 app
 curl --fail https://email-api.example.com/
 ```
 

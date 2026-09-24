@@ -1,20 +1,26 @@
 export interface SiteConfig {
+  name: string;
   apiKey: string;
   recipient: string;
 }
 
-const siteEnvironmentPrefixes: Record<string, string> = {
-  deliva: 'SITE_DELIVA',
-  alumni: 'SITE_ALUMNI',
-};
+const siteDefinitions: Record<string, { prefix: string; defaultName: string }> =
+  {
+    deliva: { prefix: 'SITE_DELIVA', defaultName: 'Deliva Fasta' },
+    alumni: { prefix: 'SITE_ALUMNI', defaultName: 'Rongai Old Boys Alumni' },
+  };
 
 export function getSiteConfig(siteId: string): SiteConfig | undefined {
-  const prefix = siteEnvironmentPrefixes[siteId];
-  if (!prefix) return undefined;
+  const definition = siteDefinitions[siteId];
+  if (!definition) return undefined;
 
-  const apiKey = process.env[`${prefix}_APIKEY`];
-  const recipient = process.env[`${prefix}_RECIPIENT`];
+  const apiKey = process.env[`${definition.prefix}_APIKEY`];
+  const recipient = process.env[`${definition.prefix}_RECIPIENT`];
   if (!apiKey || !recipient) return undefined;
 
-  return { apiKey, recipient };
+  return {
+    name: process.env[`${definition.prefix}_NAME`] ?? definition.defaultName,
+    apiKey,
+    recipient,
+  };
 }

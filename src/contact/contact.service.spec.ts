@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import type { Queue } from 'bull';
 import type { Repository } from 'typeorm';
 import { ContactService } from './contact.service.js';
@@ -29,6 +29,7 @@ describe('ContactService', () => {
   beforeEach(() => {
     process.env.SITE_DELIVA_APIKEY = 'secret-key';
     process.env.SITE_DELIVA_RECIPIENT = 'contact@deliva.example';
+    process.env.SITE_DELIVA_NAME = 'Deliva Fasta';
     repo = {
       findOne: vi.fn(),
       create: vi.fn((record) => ({ id: 'contact-1', ...record })),
@@ -44,6 +45,7 @@ describe('ContactService', () => {
 
   afterEach(() => {
     process.env = { ...originalEnvironment };
+    vi.restoreAllMocks();
   });
 
   it('requires an idempotency key', async () => {
@@ -57,20 +59,27 @@ describe('ContactService', () => {
     repo.findOne.mockResolvedValue({ id: 'existing-1', status: 'sent' });
 
     await expect(service.handleContact(dto, 'same-key')).resolves.toEqual({
-      id: 'existing-1',
-      status: 'sent',
+      success: true,
+      message:
+        'Your message was already received. No duplicate submission was created.',
+      requestId: 'existing-1',
+      status: 'accepted',
       duplicate: true,
     });
     expect(repo.save).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
   });
 
-  it('persists and queues a valid contact request', async () => {
+  it('returns immediately after persistence without waiting for Redis', async () => {
     repo.findOne.mockResolvedValue(null);
+    queue.add.mockReturnValue(new Promise(() => undefined));
 
     await expect(service.handleContact(dto, 'unique-key')).resolves.toEqual({
-      id: 'contact-1',
-      status: 'queued',
+      success: true,
+      message:
+        'Thank you. Your message has been received and will be delivered shortly.',
+      requestId: 'contact-1',
+      status: 'accepted',
       duplicate: false,
     });
     expect(repo.create).toHaveBeenCalledWith(
@@ -86,11 +95,30 @@ describe('ContactService', () => {
       'send-contact-email',
       expect.objectContaining({
         contactId: 'contact-1',
+        receivedAt: expect.any(String),
+        sourceName: 'Deliva Fasta',
         to: 'contact@deliva.example',
         siteId: 'deliva',
       }),
-      expect.objectContaining({ attempts: 5, removeOnComplete: true }),
+      expect.objectContaining({
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+      }),
     );
+  });
+
+  it('marks the contact failed when it cannot be queued', async () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    repo.findOne.mockResolvedValue(null);
+    queue.add.mockRejectedValue(new Error('Redis unavailable'));
+
+    await service.handleContact(dto, 'queue-failure-key');
+    await vi.waitFor(() => {
+      expect(repo.update).toHaveBeenCalledWith('contact-1', {
+        status: 'failed',
+      });
+    });
   });
 
   it('rejects a site that is not configured', async () => {

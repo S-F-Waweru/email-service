@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { apiReference } from '@scalar/nestjs-api-reference';
 import helmet from 'helmet';
@@ -8,17 +8,20 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const express = app.getHttpAdapter().getInstance();
+  express.set('trust proxy', 1);
 
   app.use(
     helmet({
       contentSecurityPolicy: {
         directives: {
-          ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-          'script-src': [
+          scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+          scriptSrcElem: [
             "'self'",
             "'unsafe-inline'",
             'https://cdn.jsdelivr.net',
           ],
+          connectSrc: ["'self'", 'https://cdn.jsdelivr.net'],
         },
       },
     }),
@@ -31,7 +34,6 @@ async function bootstrap() {
       transform: true,
     }),
   );
-
 
   const allowedOrigins = (process.env.CORS_ORIGINS ?? '')
     .split(',')
@@ -58,10 +60,14 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, openApiConfig);
   app.use('/docs', apiReference({ content: document, theme: 'purple' }));
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT ?? 3000;
   await app.listen(port);
-  console.log(`Application is listening on port http://localhost:${port}`);
-  console.log(`Application is listening on port http://localhost:${port}/docs`);
-
+  const publicUrl = (process.env.APP_URL ?? `http://localhost:${port}`).replace(
+    /\/$/,
+    '',
+  );
+  const logger = new Logger('Bootstrap');
+  logger.log(`Application: ${publicUrl}`);
+  logger.log(`API documentation: ${publicUrl}/docs`);
 }
 void bootstrap();

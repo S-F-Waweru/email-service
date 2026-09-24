@@ -22,6 +22,9 @@ import { dataSourceOptions } from './database/data-source.js';
       redis: {
         host: process.env.REDIS_HOST,
         port: Number(process.env.REDIS_PORT ?? 6379),
+        // Bull requires persistent Redis connections. Queue operations wait for
+        // Redis to reconnect instead of failing an HTTP request after 20 retries.
+        maxRetriesPerRequest: null,
       },
     }),
     ContactModule,

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
@@ -9,6 +9,8 @@ import { getSiteConfig } from '../config/sites.config.js';
 
 @Injectable()
 export class ContactService {
+  private readonly logger = new Logger(ContactService.name);
+
   constructor(
     @InjectRepository(ContactRequest)
     private readonly repo: Repository<ContactRequest>,
@@ -22,7 +24,14 @@ export class ContactService {
 
     const existing = await this.repo.findOne({ where: { idempotencyKey } });
     if (existing) {
-      return { id: existing.id, status: existing.status, duplicate: true };
+      return {
+        success: true,
+        message:
+          'Your message was already received. No duplicate submission was created.',
+        requestId: existing.id,
+        status: 'accepted' as const,
+        duplicate: true,
+      };
     }
 
     const site = getSiteConfig(dto.siteId);
@@ -43,28 +52,61 @@ export class ContactService {
     });
     await this.repo.save(record);
 
+    void this.enqueueContactEmail(
+      record.id,
+      record.createdAt ?? new Date(),
+      dto,
+      site.name,
+      site.recipient,
+    ).catch(async (error: unknown) => {
+      const stack = error instanceof Error ? error.stack : String(error);
+      this.logger.error(
+        `Unable to queue contact email ${record.id}; marking it failed`,
+        stack,
+      );
+      await this.updateStatus(record.id, 'failed');
+    });
+
+    return {
+      success: true,
+      message:
+        'Thank you. Your message has been received and will be delivered shortly.',
+      requestId: record.id,
+      status: 'accepted' as const,
+      duplicate: false,
+    };
+  }
+
+  private async enqueueContactEmail(
+    contactId: string,
+    receivedAt: Date,
+    dto: CreateContactDto,
+    sourceName: string,
+    recipient: string,
+  ): Promise<void> {
     await this.mailQueue.add(
       'send-contact-email',
       {
-        contactId: record.id,
-        to: site.recipient,
+        contactId,
+        receivedAt: receivedAt.toISOString(),
+        sourceName,
+        to: recipient,
         from: dto.email,
         fullName: dto.fullName,
         phoneNumber: dto.phoneNumber,
         company: dto.company,
-        subject: dto.subject || `New contact form: ${dto.siteId}`,
+        subject: `[${sourceName}] ${dto.subject || 'New contact request'}`,
         message: dto.message,
         siteId: dto.siteId,
       },
       {
         attempts: 5,
-        backoff: { type: 'exponential', delay: 3000 },
+        // Initial attempt plus retries after 2, 4, 8, and 16 seconds.
+        backoff: { type: 'exponential', delay: 2000 },
         removeOnComplete: true,
         removeOnFail: false,
       },
     );
-
-    return { id: record.id, status: record.status, duplicate: false };
   }
 
   updateStatus(id: string, status: ContactRequest['status']) {

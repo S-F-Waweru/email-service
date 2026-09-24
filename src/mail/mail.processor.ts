@@ -5,6 +5,8 @@ import { ContactService } from '../contact/contact.service.js';
 
 interface ContactEmailJob {
   contactId: string;
+  receivedAt: string;
+  sourceName: string;
   to: string;
   from: string;
   fullName: string;
@@ -25,6 +27,17 @@ function escapeHtml(value: string): string {
   );
 }
 
+function formatReceivedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return `${new Intl.DateTimeFormat('en-GB', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'UTC',
+  }).format(date)} UTC`;
+}
+
 @Processor('mail')
 export class MailProcessor {
   constructor(
@@ -36,6 +49,8 @@ export class MailProcessor {
   async handleSendEmail(job: Job<ContactEmailJob>): Promise<void> {
     const {
       contactId,
+      receivedAt,
+      sourceName,
       to,
       from,
       fullName,
@@ -52,30 +67,104 @@ export class MailProcessor {
       company: company ? escapeHtml(company) : undefined,
       message: escapeHtml(message).replace(/\r?\n/g, '<br>'),
       siteId: escapeHtml(siteId),
+      subject: escapeHtml(subject),
+      receivedAt: escapeHtml(formatReceivedAt(receivedAt)),
+      sourceName: escapeHtml(sourceName),
     };
-    const companyRow = safe.company
-      ? `<tr><td style="padding:8px 0;color:#64748b">Company</td><td style="padding:8px 0">${safe.company}</td></tr>`
-      : '';
+    const companyValue = safe.company ?? '—';
     const html = `<!doctype html>
-<html><body style="margin:0;background:#f1f5f9;font-family:Arial,sans-serif;color:#0f172a">
-  <div style="max-width:640px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden">
-    <div style="padding:24px;background:#111827;color:#fff">
-      <h1 style="margin:0;font-size:22px">New contact request</h1>
-      <p style="margin:8px 0 0;color:#cbd5e1">Submitted through ${safe.siteId}</p>
-    </div>
-    <div style="padding:24px">
-      <table style="width:100%;border-collapse:collapse">
-        <tr><td style="padding:8px 0;color:#64748b;width:130px">Full name</td><td style="padding:8px 0">${safe.fullName}</td></tr>
-        <tr><td style="padding:8px 0;color:#64748b">Email</td><td style="padding:8px 0"><a href="mailto:${safe.from}">${safe.from}</a></td></tr>
-        <tr><td style="padding:8px 0;color:#64748b">Phone</td><td style="padding:8px 0">${safe.phoneNumber}</td></tr>
-        ${companyRow}
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#fafafa;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#18181b">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0">New contact request from ${safe.fullName} via ${safe.sourceName}</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#fafafa">
+    <tr><td align="center" style="padding:24px 12px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:680px;background:#ffffff">
+        <tr><td style="padding:28px 32px 20px;border-top:4px solid #18181b;border-bottom:1px solid #e4e4e7;background:#ffffff;color:#18181b">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr>
+              <td>
+                <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#71717a">Contact submission</div>
+                <h1 style="margin:7px 0 0;font-size:21px;line-height:1.35;letter-spacing:-.015em">${safe.sourceName}</h1>
+              </td>
+              <td align="right" valign="bottom" style="color:#71717a;font-size:12px;line-height:1.5">
+                ${safe.receivedAt}<br>${safe.siteId}
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:24px 32px 20px;border-bottom:1px solid #e4e4e7;background:#ffffff">
+          <div style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#71717a">Subject</div>
+          <div style="margin-top:5px;font-size:15px;font-weight:600;line-height:1.5;color:#18181b">${safe.subject}</div>
+        </td></tr>
+
+        <tr><td style="padding:20px 32px 4px">
+          <div style="margin-bottom:8px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#71717a">Submission</div>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-top:1px solid #e4e4e7;border-bottom:1px solid #e4e4e7;border-collapse:collapse">
+            <tr>
+              <td width="50%" valign="top" style="padding:10px 16px 10px 0;border-right:1px solid #e4e4e7">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#71717a">Company site</div>
+                <div style="margin-top:4px;color:#18181b;font-size:14px;font-weight:600">${safe.sourceName}</div>
+              </td>
+              <td width="50%" valign="top" style="padding:10px 0 10px 16px">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#71717a">Received</div>
+                <div style="margin-top:4px;color:#18181b;font-size:13px">${safe.receivedAt}</div>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:18px 32px 4px">
+          <div style="margin-bottom:8px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#71717a">Contact</div>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-top:1px solid #e4e4e7;border-bottom:1px solid #e4e4e7;border-collapse:collapse">
+            <tr>
+              <td width="50%" valign="top" style="padding:10px 16px 9px 0;border-right:1px solid #e4e4e7;border-bottom:1px solid #e4e4e7">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#71717a">Full name</div>
+                <div style="margin-top:4px;color:#18181b;font-size:14px;font-weight:600">${safe.fullName}</div>
+              </td>
+              <td width="50%" valign="top" style="padding:10px 0 9px 16px;border-bottom:1px solid #e4e4e7">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#71717a">Company</div>
+                <div style="margin-top:4px;color:#18181b;font-size:14px">${companyValue}</div>
+              </td>
+            </tr>
+            <tr>
+              <td width="50%" valign="top" style="padding:10px 16px 10px 0;border-right:1px solid #e4e4e7">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#71717a">Email</div>
+                <div style="margin-top:4px;font-size:13px"><a href="mailto:${safe.from}" style="color:#18181b;text-decoration:underline;text-underline-offset:3px">${safe.from}</a></div>
+              </td>
+              <td width="50%" valign="top" style="padding:10px 0 10px 16px">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#71717a">Phone</div>
+                <div style="margin-top:4px;font-size:13px"><a href="tel:${safe.phoneNumber}" style="color:#18181b;text-decoration:underline;text-underline-offset:3px">${safe.phoneNumber}</a></div>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:18px 32px 4px">
+          <div style="margin-bottom:8px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#71717a">Message</div>
+          <div style="padding:0 0 16px;border-bottom:1px solid #e4e4e7;background:#ffffff;color:#27272a;font-size:14px;line-height:1.65">${safe.message}</div>
+        </td></tr>
+
+        <tr><td style="padding:14px 32px 20px;color:#52525b;font-size:13px">
+          <strong style="color:#18181b">Respond:</strong>
+          <a href="mailto:${safe.from}?subject=Re:%20${encodeURIComponent(subject)}" style="margin-left:8px;color:#18181b;text-decoration:underline;text-underline-offset:3px">${safe.from}</a>
+          <span style="margin:0 7px;color:#a1a1aa">·</span>
+          <a href="tel:${safe.phoneNumber}" style="color:#18181b;text-decoration:underline;text-underline-offset:3px">${safe.phoneNumber}</a>
+        </td></tr>
+
+        <tr><td style="padding:14px 32px;border-top:1px solid #e4e4e7;background:#fafafa;color:#71717a;font-size:11px;line-height:1.6">
+          Sent from the ${safe.sourceName} website contact form. Replying responds directly to ${safe.fullName}.
+        </td></tr>
       </table>
-      <div style="margin-top:20px;padding:18px;background:#f8fafc;border-left:4px solid #6366f1;border-radius:4px;line-height:1.6">${safe.message}</div>
-    </div>
-  </div>
+    </td></tr>
+  </table>
 </body></html>`;
     const text = [
       `New contact request from ${siteId}`,
+      `Company site: ${sourceName}`,
+      `Received: ${formatReceivedAt(receivedAt)}`,
+      `Subject: ${subject}`,
       `Full name: ${fullName}`,
       `Email: ${from}`,
       `Phone: ${phoneNumber}`,

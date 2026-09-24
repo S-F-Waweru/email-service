@@ -44,6 +44,7 @@ real credentials.
 | Variable                        | Purpose                                                                |
 | ------------------------------- | ---------------------------------------------------------------------- |
 | `PORT`                          | HTTP port; defaults to `3000`                                          |
+| `APP_URL`                       | Public base URL shown in startup logs                                  |
 | `DB_HOST`, `DB_PORT`            | PostgreSQL network address                                             |
 | `DB_USER`, `DB_PASS`, `DB_NAME` | PostgreSQL credentials and database                                    |
 | `REDIS_HOST`, `REDIS_PORT`      | Redis network address                                                  |
@@ -101,12 +102,18 @@ Optional body fields are `company` and `subject`. Generate one UUID when the
 visitor starts a submission and reuse it only when retrying that same submission.
 Generate a new idempotency key for a genuinely new message.
 
-Typical success response:
+The endpoint returns `202 Accepted` as soon as the submission is stored. Redis
+queueing and SMTP delivery continue asynchronously, so this response confirms
+acceptance rather than final email delivery.
+
+Typical accepted response:
 
 ```json
 {
-  "id": "contact-request-uuid",
-  "status": "queued",
+  "success": true,
+  "message": "Thank you. Your message has been received and will be delivered shortly.",
+  "requestId": "contact-request-uuid",
+  "status": "accepted",
   "duplicate": false
 }
 ```
@@ -126,26 +133,28 @@ Errors use a consistent body:
 
 ## Local email testing
 
-Start PostgreSQL, Redis, and Mailpit:
+Build and start the API, PostgreSQL, Redis, and Mailpit:
 
 ```bash
-docker compose up -d postgres redis
-npm run mailpit:up
+npm run services:up
 ```
 
-Use these local SMTP values:
+The development Compose override automatically gives the application container
+these local SMTP values:
 
 ```env
-SMTP_HOST=localhost
+SMTP_HOST=mailpit
 SMTP_PORT=1025
 SMTP_SECURE=false
 SMTP_USER=
 SMTP_PASS=
-SMTP_FROM=NVO Contact <no-reply@nvo.local>
+SMTP_FROM=Website Contact <no-reply@email-service.local>
 ```
 
-Open `http://localhost:8025` to inspect captured messages. Mailpit never belongs
-in the production environment.
+The API container reaches dependencies by the Compose service names `postgres`,
+`redis`, and `mailpit`; no database or Redis host ports are required. Open
+`http://localhost:8025` to inspect captured messages. Mailpit never belongs in the
+production environment.
 
 ## Database migrations
 
@@ -197,6 +206,11 @@ Bull cannot connect to Redis. Confirm Redis is running and verify
 `REDIS_HOST`/`REDIS_PORT`. Use `localhost` when Nest runs on the host and `redis`
 when Nest runs inside the same Compose network.
 
+The Bull Redis connection is configured to reconnect without holding the HTTP
+response. Redis must still be reachable before a job can actually enter the queue.
+Once queued, failed SMTP delivery uses one initial attempt followed by retries
+after approximately 2, 4, 8, and 16 seconds.
+
 ### Request is queued but no message arrives
 
 - Inspect the API/worker logs.
@@ -204,3 +218,12 @@ when Nest runs inside the same Compose network.
 - Confirm the recipient environment variable for the selected site.
 - Inspect Mailpit at `http://localhost:8025` during local development.
 - Check the `status` column in `contact_requests` for `sent` or `failed`.
+
+### Scalar is blocked by Content Security Policy
+
+The `/docs` page loads Scalar's browser module from `https://cdn.jsdelivr.net`.
+The application CSP permits that origin for `script-src`, `script-src-elem`, and
+`connect-src`. Rebuild/restart the application after security-header changes. If
+the response still contains a stricter policy, check Nginx for an additional
+`Content-Security-Policy` header; multiple CSP headers are enforced together, so
+a stricter proxy policy can still block the module.

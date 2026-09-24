@@ -1,0 +1,10 @@
+services:
+  app:
+    image: nvo-email-service:production
+    restart: always
+
+  postgres:
+    restart: always
+
+  redis:
+    restart: always

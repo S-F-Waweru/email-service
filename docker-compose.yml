@@ -1,16 +1,70 @@
 services:
+  app:
+    build:
+      context: .
+    image: nvo-email-service:local
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-emailservice}
+      DB_PASS: ${DB_PASS:-emailservice}
+      DB_NAME: ${DB_NAME:-emailservice}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-Website Contact <no-reply@email-service.local>}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      THROTTLE_TTL_MS: ${THROTTLE_TTL_MS:-60000}
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-30}
+      SITE_DELIVA_APIKEY: ${SITE_DELIVA_APIKEY:-}
+      SITE_DELIVA_RECIPIENT: ${SITE_DELIVA_RECIPIENT:-}
+      SITE_DELIVA_NAME: ${SITE_DELIVA_NAME:-Deliva Fasta}
+      SITE_ALUMNI_APIKEY: ${SITE_ALUMNI_APIKEY:-}
+      SITE_ALUMNI_RECIPIENT: ${SITE_ALUMNI_RECIPIENT:-}
+      SITE_ALUMNI_NAME: ${SITE_ALUMNI_NAME:-Rongai Old Boys Alumni}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${PORT:-3000}:3000'
+
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: emailservice
-      POSTGRES_PASSWORD: emailservice
-      POSTGRES_DB: emailservice
-    ports: ["5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+      POSTGRES_USER: ${DB_USER:-emailservice}
+      POSTGRES_PASSWORD: ${DB_PASS:-emailservice}
+      POSTGRES_DB: ${DB_NAME:-emailservice}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   pgdata:
+  redisdata:
