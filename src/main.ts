@@ -24,7 +24,7 @@ async function bootstrap() {
           connectSrc: ["'self'", 'https://cdn.jsdelivr.net'],
         },
       },
-      referrerPolicy: { policy: 'strict-origin-when-cross-origin' }, // Explicitly set here
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     }),
   );
 
