@@ -1,4 +1,5 @@
 import { Process, Processor } from '@nestjs/bull';
+import { Logger } from '@nestjs/common';
 import type { Job } from 'bull';
 import { MailService } from './mail.service.js';
 import { ContactService } from '../contact/contact.service.js';
@@ -40,6 +41,8 @@ function formatReceivedAt(value: string): string {
 
 @Processor('mail')
 export class MailProcessor {
+  private readonly logger = new Logger(MailProcessor.name);
+
   constructor(
     private readonly mailService: MailService,
     private readonly contactService: ContactService,
@@ -60,6 +63,12 @@ export class MailProcessor {
       message,
       siteId,
     } = job.data;
+    const attempt = job.attemptsMade + 1;
+    const maxAttempts = job.opts.attempts ?? 1;
+
+    this.logger.log(
+      `Contact email delivery started requestId=${contactId} jobId=${String(job.id)} siteId=${siteId} attempt=${attempt}/${maxAttempts}`,
+    );
     const safe = {
       fullName: escapeHtml(fullName),
       from: escapeHtml(from),
@@ -174,11 +183,45 @@ export class MailProcessor {
     ].join('\n');
 
     try {
-      await this.mailService.send(to, subject, html, text, from);
+      const result = await this.mailService.send(to, subject, html, text, from);
       await this.contactService.updateStatus(contactId, 'sent');
-    } catch (error) {
+      this.logger.log(
+        `Contact email delivered requestId=${contactId} jobId=${String(job.id)} siteId=${siteId} attempt=${attempt}/${maxAttempts} messageId=${String(result?.messageId ?? 'unknown')} accepted=${result?.accepted?.length ?? 0} rejected=${result?.rejected?.length ?? 0}`,
+      );
+    } catch (error: unknown) {
       await this.contactService.updateStatus(contactId, 'failed');
+      const details = this.getErrorDetails(error);
+      this.logger.error(
+        `Contact email delivery failed requestId=${contactId} jobId=${String(job.id)} siteId=${siteId} attempt=${attempt}/${maxAttempts} willRetry=${attempt < maxAttempts} errorName=${details.name} errorCode=${details.code} command=${details.command} responseCode=${details.responseCode} message=${details.message}`,
+        details.stack,
+      );
       throw error;
     }
+  }
+  private getErrorDetails(error: unknown) {
+    if (!(error instanceof Error)) {
+      return {
+        name: 'UnknownError',
+        code: 'unknown',
+        command: 'unknown',
+        responseCode: 'unknown',
+        message: String(error),
+        stack: undefined,
+      };
+    }
+
+    const smtpError = error as Error & {
+      code?: string;
+      command?: string;
+      responseCode?: number;
+    };
+    return {
+      name: error.name,
+      code: String(smtpError.code ?? 'unknown'),
+      command: String(smtpError.command ?? 'unknown'),
+      responseCode: String(smtpError.responseCode ?? 'unknown'),
+      message: error.message.replace(/[\r\n]+/g, ' '),
+      stack: error.stack,
+    };
   }
 }

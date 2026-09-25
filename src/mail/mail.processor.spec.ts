@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { Job } from 'bull';
 import type { ContactService } from '../contact/contact.service.js';
 import { MailProcessor } from './mail.processor.js';
@@ -5,6 +6,9 @@ import type { MailService } from './mail.service.js';
 
 describe('MailProcessor', () => {
   const job = {
+    id: 'job-1',
+    attemptsMade: 0,
+    opts: { attempts: 5 },
     data: {
       contactId: 'contact-1',
       receivedAt: '2026-09-24T10:30:00.000Z',
@@ -25,12 +29,18 @@ describe('MailProcessor', () => {
   let processor: MailProcessor;
 
   beforeEach(() => {
+    vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     mailService = { send: vi.fn().mockResolvedValue(undefined) };
     contactService = { updateStatus: vi.fn().mockResolvedValue(undefined) };
     processor = new MailProcessor(
       mailService as unknown as MailService,
       contactService as unknown as ContactService,
     );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('sends safe HTML, includes plain text, and marks the request as sent', async () => {

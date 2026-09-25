@@ -11,8 +11,8 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-emailservice}
-      DB_PASS: ${DB_PASS:-emailservice}
-      DB_NAME: ${DB_NAME:-emailservice}
+      DB_PASS: ${DB_PASS:-email@service}
+      DB_NAME: ${DB_NAME:-email_service_db}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SMTP_HOST: ${SMTP_HOST:-}

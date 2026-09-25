@@ -24,6 +24,9 @@ export class ContactService {
 
     const existing = await this.repo.findOne({ where: { idempotencyKey } });
     if (existing) {
+      this.logger.log(
+        `Contact request duplicate requestId=${existing.id} status=${existing.status}`,
+      );
       return {
         success: true,
         message:
@@ -51,6 +54,9 @@ export class ContactService {
       status: 'queued',
     });
     await this.repo.save(record);
+    this.logger.log(
+      `Contact request accepted requestId=${record.id} siteId=${record.siteId} status=${record.status}`,
+    );
 
     void this.enqueueContactEmail(
       record.id,
@@ -84,7 +90,7 @@ export class ContactService {
     sourceName: string,
     recipient: string,
   ): Promise<void> {
-    await this.mailQueue.add(
+    const job = await this.mailQueue.add(
       'send-contact-email',
       {
         contactId,
@@ -106,6 +112,9 @@ export class ContactService {
         removeOnComplete: true,
         removeOnFail: false,
       },
+    );
+    this.logger.log(
+      `Contact email queued requestId=${contactId} jobId=${String(job.id)} siteId=${dto.siteId} attempts=5`,
     );
   }
 
